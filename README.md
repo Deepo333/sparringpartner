@@ -1,4 +1,4 @@
-# Sparring Partner 👽
+# Sparring Partner 👽 
 
 A voice-first AI sparring partner for debate and critical thinking.
 *Don't just tell me what I believe. Make me defend it.*
