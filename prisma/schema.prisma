@@ -1,0 +1,156 @@
+// Sparring Partner data model.
+//
+// Two rules this schema exists to protect (see docs/SPEC.md):
+// 1. Every session is a config object covering ALL customization-matrix axes,
+//    even the ones Stage 1's UI doesn't expose yet.
+// 2. Transcripts are verbatim and append-only. Turn text is never summarized
+//    or overwritten (a database trigger in the first migration enforces this).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Customization matrix axes ----------
+
+// WHAT are we doing?
+enum Activity {
+  DEBATE
+  LEARN
+  REFLECT
+  CHANGE_MY_MIND
+}
+
+// WHO is the AI? (the kind of role; the specific viewpoint lives in Session.aiRole)
+enum AiRoleType {
+  OPPONENT
+  TEACHER
+  COACH
+  SOCRATIC_GUIDE
+}
+
+// HOW difficult is the opponent?
+enum Difficulty {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+// HOW complex is the language and content?
+enum Complexity {
+  VERY_SIMPLE
+  BASIC
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+// HOW confrontational?
+enum ConfrontationLevel {
+  FRIENDLY
+  CHALLENGING
+  COMBATIVE
+}
+
+// HOW conversational?
+enum ConversationStyle {
+  STRUCTURED
+  NATURAL
+  CASUAL
+}
+
+// HOW interruptible?
+enum Interruptibility {
+  STRICT_TURNS
+  CONVERSATIONAL
+  FULLY_INTERRUPTIBLE
+}
+
+// ---------- Sessions and turns ----------
+
+enum SessionStatus {
+  ACTIVE
+  ENDED
+}
+
+enum Speaker {
+  USER
+  AI
+}
+
+enum InputMethod {
+  VOICE        // sent exactly as the speech recognizer heard it
+  VOICE_EDITED // recognized by voice, then corrected by hand before sending
+  TEXT         // typed
+}
+
+model Session {
+  id        String        @id @default(cuid())
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  endedAt   DateTime?
+  status    SessionStatus @default(ACTIVE)
+
+  // Bumped whenever the meaning of the config fields changes.
+  configVersion Int @default(1)
+
+  // --- Session config: one column per matrix axis ---
+  activity           Activity
+  topic              String
+  userPosition       String             // WHO am I? (free text)
+  aiRoleType         AiRoleType
+  aiRole             String             // WHO is the AI? (free text viewpoint, e.g. "an atheist philosopher")
+  difficulty         Difficulty
+  complexity         Complexity
+  confrontationLevel ConfrontationLevel
+  conversationStyle  ConversationStyle
+  interruptibility   Interruptibility
+  adaptiveDifficulty Boolean            @default(false) // hook for Stage 7
+
+  turns Turn[]
+
+  @@index([createdAt])
+}
+
+model Turn {
+  id        String   @id @default(cuid())
+  sessionId String
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  index     Int      // 0-based order within the session
+  speaker   Speaker
+  text      String   // EXACT words. Never summarized, never overwritten.
+  createdAt DateTime @default(now()) // when the server stored the turn
+
+  // Timing, measured on the device where it happened.
+  // USER turns: startedAt = first mic tap / first keystroke, endedAt = when sent.
+  // AI turns:   startedAt = request received, endedAt = generation finished.
+  startedAt DateTime?
+  endedAt   DateTime?
+
+  // USER turns only: milliseconds between the AI finishing (its voice ending, or
+  // its text finishing if muted) and the user starting. Negative means the user
+  // started (e.g. began typing) before the AI finished. Null when unknown
+  // (e.g. the opening turn, or the first turn after reopening a session).
+  responseTimeMs Int?
+  // USER turns only: true if the user cut the AI's voice off (tapped the mic
+  // or sent while it was still talking). The AI's finish time is then the
+  // moment it was cut off.
+  interruptedAi  Boolean?
+
+  // USER turns only.
+  inputMethod   InputMethod?
+  rawTranscript String?      // what speech recognition heard, before any hand edits
+
+  // AI turns only.
+  model        String?
+  stopReason   String?
+  inputTokens  Int?
+  outputTokens Int?
+
+  @@unique([sessionId, index])
+}
